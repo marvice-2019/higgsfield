@@ -28,6 +28,10 @@ async function migrate() {
 
 async function seedAdmin() {
   const e = env();
+  // Keep the main admin's display name in sync with ADMIN_NAME (there is no rename screen).
+  if (e.ADMIN_EMAIL && process.env.ADMIN_NAME) {
+    await sql()`UPDATE users SET name = ${e.ADMIN_NAME} WHERE email = ${e.ADMIN_EMAIL.toLowerCase()} AND name <> ${e.ADMIN_NAME}`;
+  }
   const [{ n }] = await sql()<{ n: number }[]>`SELECT count(*)::int AS n FROM users WHERE role = 'admin'`;
   if (n > 0) return;
   if (!e.ADMIN_EMAIL || !e.ADMIN_PASSWORD) {
@@ -36,7 +40,7 @@ async function seedAdmin() {
   }
   await sql()`
     INSERT INTO users (email, name, password_hash, role)
-    VALUES (${e.ADMIN_EMAIL.toLowerCase()}, 'Admin', ${await hashPassword(e.ADMIN_PASSWORD)}, 'admin')
+    VALUES (${e.ADMIN_EMAIL.toLowerCase()}, ${e.ADMIN_NAME}, ${await hashPassword(e.ADMIN_PASSWORD)}, 'admin')
     ON CONFLICT (email) DO UPDATE SET role = 'admin', active = true`;
   log.info("admin user created", { email: e.ADMIN_EMAIL });
 }

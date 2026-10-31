@@ -29,6 +29,7 @@ Runs at `https://higgsfield.marvice.tech`. Built with Next.js 16, Postgres and D
    | `APP_URL` | `https://higgsfield.marvice.tech` |
    | `HF_API_KEY_ID` / `HF_API_KEY_SECRET` | from https://console.higgsfield.ai → API keys |
    | `ADMIN_EMAIL` | `yuvarajgs@marvice.in` |
+   | `ADMIN_NAME` | `Yuvaraj` (display name shown in the top bar, gallery and Team page; updated on every boot) |
    | `ADMIN_PASSWORD` | a strong password, at least 10 characters (only used to create the first admin) |
    | `DAILY_LIMIT` | optional, default 25 per member per day |
    | `ADMIN_DAILY_LIMIT` | optional, default 100 |

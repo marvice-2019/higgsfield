@@ -7,6 +7,7 @@ const schema = z.object({
   HF_API_KEY_SECRET: z.string().min(1, "HF_API_KEY_SECRET is required"),
   HF_API_BASE: z.url().default("https://api.higgsfield.ai"),
   ADMIN_EMAIL: z.email().optional(),
+  ADMIN_NAME: z.string().trim().min(1).max(80).default("Admin"),
   ADMIN_PASSWORD: z.string().min(10, "ADMIN_PASSWORD must be at least 10 characters").optional(),
   MEDIA_DIR: z.string().default("/data/media"),
   DAILY_LIMIT: z.coerce.number().int().min(0).default(25),
