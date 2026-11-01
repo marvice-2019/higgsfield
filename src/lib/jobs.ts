@@ -3,8 +3,9 @@ import { env } from "./env";
 import { getStatus, HfError, submit, type HfStatus } from "./hf";
 import { HttpError } from "./http";
 import { errMsg, log } from "./log";
-import { saveFromUrl } from "./media";
-import type { ModelDef } from "./models";
+import { saveBuffer, saveFromUrl } from "./media";
+import { providerOf, type ModelDef } from "./models";
+import { jobStatus, RunpodError, submitJob } from "./runpod";
 
 const POLL_GAP_SECONDS = 4;
 const SUBMIT_STUCK_MINUTES = 5;
@@ -16,8 +17,10 @@ export async function createGeneration(opts: {
   model: ModelDef;
   input: Record<string, unknown>;
   inputImageUrl: string | null;
+  inputImage?: { data: Buffer; type: string } | null; // RunPod models receive the image inline
 }): Promise<GenerationRow> {
-  const { user, model, input, inputImageUrl } = opts;
+  const { user, model, input, inputImageUrl, inputImage } = opts;
+  const provider = providerOf(model);
   const e = env();
   const dailyLimit = user.role === "admin" ? e.ADMIN_DAILY_LIMIT : e.DAILY_LIMIT;
   const { prompt, ...params } = input;
@@ -28,7 +31,7 @@ export async function createGeneration(opts: {
       SELECT
         count(*) FILTER (
           WHERE created_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata')
-            AND NOT (status = 'failed' AND hf_request_id IS NULL)
+            AND NOT (status = 'failed' AND hf_request_id IS NULL AND provider_request_id IS NULL)
         )::int AS today,
         count(*) FILTER (WHERE status IN ('submitting', 'queued', 'in_progress'))::int AS active
       FROM generations WHERE user_id = ${user.id}`;
@@ -36,11 +39,14 @@ export async function createGeneration(opts: {
     if (active >= e.MAX_ACTIVE_PER_USER)
       throw new HttpError(429, `You already have ${active} jobs running. Wait for one to finish.`);
     const [row] = await tx<GenerationRow[]>`
-      INSERT INTO generations (user_id, model, kind, prompt, params, input_image_url, status)
-      VALUES (${user.id}, ${model.id}, ${model.kind}, ${String(prompt)}, ${tx.json(params as never)}, ${inputImageUrl}, 'submitting')
+      INSERT INTO generations (user_id, model, kind, prompt, params, input_image_url, status, provider)
+      VALUES (${user.id}, ${model.id}, ${model.kind}, ${String(prompt)}, ${tx.json(params as never)},
+        ${inputImageUrl ?? (inputImage ? "inline-upload" : null)}, 'submitting', ${provider})
       RETURNING *`;
     return row;
   });
+
+  if (provider === "runpod") return submitToRunpod(gen, model, input, inputImage ?? null);
 
   try {
     const body = { ...input, ...(inputImageUrl ? { image_url: inputImageUrl } : {}) };
@@ -58,6 +64,74 @@ export async function createGeneration(opts: {
     log.warn("generation submit failed", { genId: gen.id, model: model.id, error: msg });
     const status = err instanceof HfError && err.status === 429 ? 429 : 502;
     throw new HttpError(status, friendly);
+  }
+}
+
+async function submitToRunpod(
+  gen: GenerationRow,
+  model: ModelDef,
+  input: Record<string, unknown>,
+  image: { data: Buffer; type: string } | null,
+): Promise<GenerationRow> {
+  try {
+    const res = await submitJob({
+      mode: model.needsImage ? "i2v" : "t2v",
+      prompt: input.prompt,
+      aspect_ratio: input.aspect_ratio,
+      duration: input.duration,
+      ...(image ? { image_b64: image.data.toString("base64") } : {}),
+    });
+    const [updated] = await sql()<GenerationRow[]>`
+      UPDATE generations SET provider_request_id = ${res.id}, status = 'queued', updated_at = now()
+      WHERE id = ${gen.id} RETURNING *`;
+    log.info("generation submitted", { genId: gen.id, model: model.id, provider: "runpod", requestId: res.id });
+    return updated;
+  } catch (err) {
+    const friendly =
+      err instanceof RunpodError && (err.status === 401 || err.status === 403)
+        ? "RunPod rejected the API key. Ask an admin to check it."
+        : "Could not reach our video GPU. Try again shortly.";
+    await sql()`UPDATE generations SET status = 'failed', error = ${friendly}, updated_at = now() WHERE id = ${gen.id}`;
+    log.warn("generation submit failed", { genId: gen.id, model: model.id, error: errMsg(err) });
+    throw new HttpError(502, friendly);
+  }
+}
+
+/** RunPod job lifecycle: IN_QUEUE / IN_PROGRESS / COMPLETED / FAILED / CANCELLED / TIMED_OUT. */
+async function refreshRunpod(gen: GenerationRow): Promise<void> {
+  const id = gen.id;
+  let s;
+  try {
+    s = await jobStatus(gen.provider_request_id!);
+  } catch (err) {
+    log.warn("runpod status poll failed", { genId: id, error: errMsg(err) });
+    if (err instanceof RunpodError && err.status === 404) {
+      await sql()`UPDATE generations SET status = 'failed', error = 'Job not found on the video GPU', updated_at = now() WHERE id = ${id}`;
+    }
+    return;
+  }
+  if (s.status === "IN_QUEUE" || s.status === "IN_PROGRESS") {
+    const next = s.status === "IN_QUEUE" ? "queued" : "in_progress";
+    if (next !== gen.status) await sql()`UPDATE generations SET status = ${next}, updated_at = now() WHERE id = ${id}`;
+    return;
+  }
+  const workerError = s.output?.error ?? s.error ?? null;
+  if (s.status !== "COMPLETED" || workerError || !s.output?.video_b64) {
+    const error =
+      s.status === "TIMED_OUT" ? "The video GPU timed out" : s.status === "CANCELLED" ? "Canceled" : (workerError ?? "Video generation failed");
+    await sql()`UPDATE generations SET status = 'failed', error = ${String(error).slice(0, 500)}, updated_at = now(), completed_at = now() WHERE id = ${id}`;
+    log.info("generation finished", { genId: id, status: s.status, error });
+    return;
+  }
+  try {
+    const saved = await saveBuffer(id, 0, Buffer.from(s.output.video_b64, "base64"), s.output.mime ?? "video/mp4", "video");
+    await sql()`
+      UPDATE generations SET status = 'completed', outputs = ${sql().json([saved] as never)}, error = NULL,
+        updated_at = now(), completed_at = now()
+      WHERE id = ${id}`;
+    log.info("generation completed", { genId: id, provider: "runpod" });
+  } catch (err) {
+    log.warn("saving runpod output failed, will retry", { genId: id, error: errMsg(err) });
   }
 }
 
@@ -92,6 +166,8 @@ export async function refresh(id: string): Promise<void> {
       AND (last_polled_at IS NULL OR last_polled_at < now() - make_interval(secs => ${POLL_GAP_SECONDS}))
     RETURNING *`;
   if (!gen) return;
+
+  if (gen.provider === "runpod" && gen.provider_request_id) return refreshRunpod(gen);
 
   if (!gen.hf_request_id) {
     if (Date.now() - gen.created_at.getTime() > SUBMIT_STUCK_MINUTES * 60_000) {

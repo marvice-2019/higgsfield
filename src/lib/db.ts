@@ -35,6 +35,8 @@ export type GenerationRow = {
   params: Record<string, unknown>;
   input_image_url: string | null;
   hf_request_id: string | null;
+  provider: "higgsfield" | "runpod";
+  provider_request_id: string | null;
   status: "submitting" | "queued" | "in_progress" | "completed" | "failed" | "nsfw" | "canceled";
   error: string | null;
   outputs: OutputFile[];

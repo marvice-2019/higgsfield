@@ -12,7 +12,7 @@ export const GET = handle(async () => {
     SELECT u.id, u.email, u.name, u.role, u.active, u.created_at,
       count(g.id) FILTER (
         WHERE g.created_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata')
-          AND NOT (g.status = 'failed' AND g.hf_request_id IS NULL)
+          AND NOT (g.status = 'failed' AND g.hf_request_id IS NULL AND g.provider_request_id IS NULL)
       )::int AS today,
       count(g.id) FILTER (WHERE g.created_at >= now() - interval '30 days' AND g.status = 'completed')::int AS last30,
       count(g.id) FILTER (WHERE g.status = 'completed')::int AS total

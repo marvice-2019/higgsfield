@@ -6,7 +6,7 @@ import { assertSameOrigin, handle, HttpError, json } from "@/lib/http";
 import { createGeneration, refresh } from "@/lib/jobs";
 import { errMsg, log } from "@/lib/log";
 import { fileSize, mimeFor, resolveMediaPath } from "@/lib/media";
-import { getModel } from "@/lib/models";
+import { getModel, providerOf } from "@/lib/models";
 import { getGeneration, listGenerations, toView } from "@/lib/views";
 
 export const dynamic = "force-dynamic";
@@ -55,7 +55,11 @@ export const POST = handle(async (req: Request) => {
   if (!parsed.success) throw new HttpError(400, parsed.error.issues[0]?.message ?? "Invalid settings");
 
   let inputImageUrl: string | null = null;
-  if (model.needsImage) {
+  let inputImage: { data: Buffer; type: string } | null = null;
+  if (model.needsImage && providerOf(model) === "runpod") {
+    inputImage = await readInputImage(form);
+    if (inputImage.data.length > 7 * 1024 * 1024) throw new HttpError(400, "Image must be under 7 MB for self-hosted models");
+  } else if (model.needsImage) {
     const { data, type } = await readInputImage(form);
     try {
       inputImageUrl = await uploadImage(data, type);
@@ -65,7 +69,7 @@ export const POST = handle(async (req: Request) => {
     }
   }
 
-  const gen = await createGeneration({ user, model, input: parsed.data, inputImageUrl });
+  const gen = await createGeneration({ user, model, input: parsed.data, inputImageUrl, inputImage });
   const row = await getGeneration(gen.id);
   return json({ item: row ? toView(row) : null }, 201);
 });

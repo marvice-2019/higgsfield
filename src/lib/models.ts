@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { enabledProviders, type Provider } from "./env";
 
 /**
  * Models from Higgsfield's published OpenAPI spec (https://docs.higgsfield.ai/docs/openapi.json).
@@ -12,7 +13,8 @@ export type FieldSpec =
   | { name: string; label: string; type: "text"; default: string; placeholder?: string };
 
 export type ModelDef = {
-  id: string; // Higgsfield path, without leading slash
+  id: string; // Higgsfield path, or "selfhost/..." for RunPod models
+  provider?: Provider; // default "higgsfield"
   label: string;
   family: string;
   kind: "image" | "video";
@@ -66,7 +68,40 @@ const seedanceBase = {
     .default(true),
 };
 
+// LTX-2.5 (Lightricks, open weights) self-hosted on RunPod: worker/ltx. Video with audio.
+const ltxFields: FieldSpec[] = [
+  { name: "aspect_ratio", label: "Aspect ratio", type: "select", options: ["16:9", "9:16", "1:1"], default: "16:9" },
+  { name: "duration", label: "Duration (s)", type: "select", options: [3, 5, 8], default: 5 },
+];
+const ltxSchema = z.object({
+  prompt,
+  aspect_ratio: z.enum(["16:9", "9:16", "1:1"]).default("16:9"),
+  duration: z.coerce.number().pipe(z.union([z.literal(3), z.literal(5), z.literal(8)])).default(5),
+});
+
 export const MODELS: ModelDef[] = [
+  {
+    id: "selfhost/ltx-2.5/text-to-video",
+    provider: "runpod",
+    label: "LTX-2.5 (self-hosted)",
+    family: "Lightricks",
+    kind: "video",
+    needsImage: false,
+    blurb: "Open model on our own GPU, with sound. No API credits. First run after idle takes a few minutes.",
+    fields: ltxFields,
+    schema: ltxSchema,
+  },
+  {
+    id: "selfhost/ltx-2.5/image-to-video",
+    provider: "runpod",
+    label: "LTX-2.5 · Animate (self-hosted)",
+    family: "Lightricks",
+    kind: "video",
+    needsImage: true,
+    blurb: "Animate a still on our own GPU, with sound. Image under 7 MB.",
+    fields: ltxFields,
+    schema: ltxSchema,
+  },
   {
     id: "bytedance/seedance-2.5/text-to-video",
     label: "Seedance 2.5",
@@ -176,12 +211,17 @@ export const MODELS: ModelDef[] = [
   },
 ];
 
+export const providerOf = (m: Pick<ModelDef, "provider">): Provider => m.provider ?? "higgsfield";
+
+/** A model is usable only when its provider is configured. */
 export function getModel(id: string): ModelDef | undefined {
-  return MODELS.find((m) => m.id === id);
+  const on = enabledProviders();
+  return MODELS.find((m) => m.id === id && on.has(providerOf(m)));
 }
 
 /** Client-safe view (no zod schema). */
 export type PublicModel = Omit<ModelDef, "schema">;
 export function publicModels(): PublicModel[] {
-  return MODELS.map(({ schema: _schema, ...rest }) => rest);
+  const on = enabledProviders();
+  return MODELS.filter((m) => on.has(providerOf(m))).map(({ schema: _schema, ...rest }) => rest);
 }

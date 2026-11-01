@@ -35,8 +35,12 @@ function ago(iso: string) {
 }
 
 export default function Studio({ models, initialItems, me, quota: initialQuota }: Props) {
-  const [kind, setKind] = useState<"image" | "video">("image");
-  const [modelId, setModelId] = useState(models.find((m) => m.kind === "image")!.id);
+  // The page only renders Studio when at least one model is configured; prefer an image model first.
+  const firstModel = models.find((m) => m.kind === "image") ?? models[0];
+  const [kind, setKind] = useState<"image" | "video">(firstModel.kind);
+  const [modelId, setModelId] = useState(firstModel.id);
+  const hasKind = (k: "image" | "video") => models.some((m) => m.kind === k);
+  const animateTarget = models.find((m) => m.kind === "video" && m.needsImage);
   const model = useMemo(() => models.find((m) => m.id === modelId)!, [models, modelId]);
   const [values, setValues] = useState<Record<string, string | number | boolean>>(() => defaults(model));
   const [prompt, setPrompt] = useState("");
@@ -68,8 +72,9 @@ export default function Studio({ models, initialItems, me, quota: initialQuota }
   );
 
   function pickKind(k: "image" | "video") {
-    if (k === kind) return;
-    pickModel(models.find((m) => m.kind === k)!.id);
+    const first = models.find((m) => m.kind === k);
+    if (k === kind || !first) return;
+    pickModel(first.id);
   }
 
   function setImageFile(f: File | null) {
@@ -180,7 +185,8 @@ export default function Studio({ models, initialItems, me, quota: initialQuota }
   function animate(item: GenerationView, index: number) {
     const out = item.outputs[index];
     const fileName = out.url.split("/").pop()!;
-    const target = models.find((m) => m.kind === "video" && m.needsImage)!;
+    const target = animateTarget;
+    if (!target) return;
     setModelId(target.id);
     setKind("video");
     setValues(defaults(target));
@@ -208,8 +214,8 @@ export default function Studio({ models, initialItems, me, quota: initialQuota }
     <main className="studio">
       <form className="composer" onSubmit={generate} aria-label="Create">
         <div className="kind-switch" role="group" aria-label="Output type">
-          <button type="button" aria-pressed={kind === "image"} onClick={() => pickKind("image")}>Image</button>
-          <button type="button" aria-pressed={kind === "video"} onClick={() => pickKind("video")}>Video</button>
+          <button type="button" aria-pressed={kind === "image"} disabled={!hasKind("image")} title={hasKind("image") ? undefined : "No image model is configured"} onClick={() => pickKind("image")}>Image</button>
+          <button type="button" aria-pressed={kind === "video"} disabled={!hasKind("video")} title={hasKind("video") ? undefined : "No video model is configured"} onClick={() => pickKind("video")}>Video</button>
         </div>
 
         <div>
@@ -361,6 +367,7 @@ export default function Studio({ models, initialItems, me, quota: initialQuota }
           index={open.index}
           label={models.find((m) => m.id === openItem.model)?.label ?? openItem.model}
           canDelete={openItem.owner.id === me.id || me.isAdmin}
+          canAnimate={Boolean(animateTarget)}
           onIndex={(i) => setOpen({ id: openItem.id, index: i })}
           onClose={() => setOpen(null)}
           onReuse={() => reuse(openItem)}
@@ -458,6 +465,7 @@ function Lightbox(props: {
   index: number;
   label: string;
   canDelete: boolean;
+  canAnimate: boolean;
   onIndex: (i: number) => void;
   onClose: () => void;
   onReuse: () => void;
@@ -503,7 +511,7 @@ function Lightbox(props: {
         <div className="side-actions">
           <a className="btn btn-primary" href={`${out.url}?download=1`}>Download</a>
           <button className="btn" type="button" onClick={props.onReuse}>Reuse prompt</button>
-          {out.type === "image" && (
+          {out.type === "image" && props.canAnimate && (
             <button className="btn" type="button" onClick={() => props.onAnimate(index)}>Animate this</button>
           )}
           {props.canDelete && (

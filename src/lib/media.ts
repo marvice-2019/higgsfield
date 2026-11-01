@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -73,6 +73,18 @@ export async function saveFromUrl(genId: string, index: number, url: string, typ
     await rm(tmpPath, { force: true });
     throw e;
   }
+  return { type, file, mime: EXT_MIME[ext] };
+}
+
+export async function saveBuffer(genId: string, index: number, data: Buffer, mime: string, type: OutputFile["type"]): Promise<OutputFile> {
+  if (data.length > MAX_BYTES) throw new Error(`Output ${index} is too large (${data.length} bytes)`);
+  const ext = MIME_EXT[mime] ?? (type === "video" ? "mp4" : "jpg");
+  const file = `${index}.${ext}`;
+  const dir = path.join(/*turbopackIgnore: true*/ env().MEDIA_DIR, genId);
+  await mkdir(dir, { recursive: true });
+  const finalPath = path.join(/*turbopackIgnore: true*/ dir, file);
+  await writeFile(`${finalPath}.part`, data);
+  await rename(`${finalPath}.part`, finalPath);
   return { type, file, mime: EXT_MIME[ext] };
 }
 

@@ -58,6 +58,6 @@ export async function usageToday(userId: string) {
     SELECT count(*)::int AS n FROM generations
     WHERE user_id = ${userId}
       AND created_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata')
-      AND NOT (status = 'failed' AND hf_request_id IS NULL)`;
+      AND NOT (status = 'failed' AND hf_request_id IS NULL AND provider_request_id IS NULL)`;
   return r.n;
 }

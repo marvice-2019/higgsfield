@@ -161,3 +161,4 @@ td.num, th.num { font-family: var(--font-mono); text-align: right; }
 .badge-off { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .muted { color: var(--muted); }
+.kind-switch button:disabled { opacity: .35; cursor: not-allowed; }

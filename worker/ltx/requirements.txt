@@ -1,0 +1,7 @@
+# Pinned for reproducible builds. LTX-2.5 support is only on diffusers main (checked 2026-11-01).
+diffusers @ https://github.com/huggingface/diffusers/archive/86ef420b17363c28e36ebad6b58555e9aa8feda2.zip
+transformers==5.22.1
+accelerate==1.15.0
+sentencepiece==0.2.2
+av==19.0.2
+runpod==1.12.0
