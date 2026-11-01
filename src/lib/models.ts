@@ -49,7 +49,56 @@ const hailuoSchema = z.object({
     .default(true),
 });
 
+// Seedance 2.5 (ByteDance via Higgsfield). Billed per second of output, so the form offers short durations.
+// Schema: https://docs.higgsfield.ai/docs/models/seedance-2-5/text-to-video.md
+const seedanceCommonFields: FieldSpec[] = [
+  { name: "duration", label: "Duration (s)", type: "select", options: [5, 8, 10, 15], default: 5 },
+  { name: "resolution", label: "Resolution", type: "select", options: ["480p", "720p", "1080p"], default: "720p" },
+  { name: "generate_audio", label: "Generate audio", type: "toggle", default: true },
+];
+const seedanceBase = {
+  prompt,
+  duration: z.coerce.number().int().min(4).max(15).default(5),
+  resolution: z.enum(["480p", "720p", "1080p"]).default("720p"),
+  generate_audio: z
+    .union([z.boolean(), z.enum(["true", "false", "on", "off"])])
+    .transform((v) => v === true || v === "true" || v === "on")
+    .default(true),
+};
+
 export const MODELS: ModelDef[] = [
+  {
+    id: "bytedance/seedance-2.5/text-to-video",
+    label: "Seedance 2.5",
+    family: "ByteDance",
+    kind: "video",
+    needsImage: false,
+    blurb: "Most realistic text to video, with sound. Billed per second.",
+    fields: [
+      {
+        name: "aspect_ratio",
+        label: "Aspect ratio",
+        type: "select",
+        options: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+        default: "16:9",
+      },
+      ...seedanceCommonFields,
+    ],
+    schema: z.object({
+      ...seedanceBase,
+      aspect_ratio: z.enum(["16:9", "4:3", "1:1", "3:4", "9:16", "21:9"]).default("16:9"),
+    }),
+  },
+  {
+    id: "bytedance/seedance-2.5/image-to-video",
+    label: "Seedance 2.5 · Animate",
+    family: "ByteDance",
+    kind: "video",
+    needsImage: true,
+    blurb: "Animate a still with realistic motion and sound. Billed per second.",
+    fields: seedanceCommonFields,
+    schema: z.object(seedanceBase),
+  },
   {
     id: "higgsfield-ai/soul/standard",
     label: "Soul",
